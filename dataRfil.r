@@ -1,15 +1,17 @@
-setwd("C:/Users/Jennifer/Desktop/DVK/HT-16/Exjobb/Filer fÃ¶r research")
+setwd("C:/Users/Jennifer/Desktop/DVK/HT-16/Exjobb/Filer för research")
 
 orig_data <- read.table("data.txt", sep = " " , header = F ,
                      na.strings ="", stringsAsFactors= F)
-					 
+library(Matrix)
+library(arules)
+library(arulesSequences)
 library(plyr)
 renamed_data <- rename(orig_data, replace = c("V1"="seqID", "V2"="eventID", "V3"="item"))
 
-aggData <- aggregate(item ~ seqID:eventID, data = renamed_data, toString) #aggregera till String
+aggDataString <- aggregate(item ~ seqID:eventID, data = renamed_data, toString) #aggregera till String
 
-aggData <- aggregate(item ~ seqID:eventID, data = renamed_data, c) #aggregera till lista
-aggData2 <- mutate(aggData, size = base::lengths(item)) #skapa kolumn size med lÃ¤ngd pÃ¥ varje lista
+aggDataList <- aggregate(item ~ seqID:eventID, data = renamed_data, c) #aggregera till lista
+aggData2 <- mutate(aggDataList, size = base::lengths(item)) #skapa kolumn size med längd på varje lista
 
 colnames(aggData2) <- c("V1", "V2", "V3", "size")
 mergedData <- cbind( aggDataString, aggData2 )
@@ -20,9 +22,46 @@ mergedData$V3 <- NULL
 mergedData <- mergedData[,c(1,2,4,3)]
 
 max <- apply(mergedData, 2, max) #max värde för varje kolumn,tredje är max för size
+library(tidyr)
 mergedDataSep <- separate(mergedData, col = "item", into = paste("V", 1:99, sep = ",")) #99 var max. separera items till 1:max kolumner
 sortData<- mergedDataSep[with(mergedDataSep, order(seqID, eventID)), ] #sorta på seqID sen eventID
 
-write.table(mergedDataSep, "data2.txt", na="", row.names=FALSE, col.names=FALSE) #skriv till fil
+write.table(sortData, "data2.txt", na="", row.names=FALSE, col.names=FALSE) #skriv till fil
 
 x <- read_baskets(con = "data2.txt", info = c("sequenceID","eventID","SIZE")) #läs in filen som transaction
+s1 <- cspade(x, parameter = list(support = 0.01), control = list(verbose = TRUE))
+
+t=s1[is.closed(s1)]
+
+#Välja två siffror som representerar 2 diagnoser. Patienter som diagnostiserats med någon av dessa två skall vara med i testgruppen.
+#Totalt 2873 patienter. 25878 sjukhusbesök.
+#Patienter inte diagnostiserats med någon av dem skall tillhöra kontrollgruppen. Sifforna: 7 och 8.
+
+
+#DELA UPP I KONTROLLGRUPP OCH TESTGRUPP.
+#
+sortPatientData <- mergedData[with(mergedData, order(seqID, eventID)), ] #sortera data
+matrixData <- as(sortPatientData, "matrix") #gör om till matrix
+patientRows <- aggregate(item ~ seqID, data = matrixData, toString) #ny matrix. en sequence per rad, med alla events i kolumn 2
+patientFrameRows <- as(patientRows, "data.frame") #till data frame igen
+pattern <- "11|, 11,|, 11"
+sum(grepl(pattern,patientFrameRows$item)) #summera antalet rows som innehåller 11
+
+#1157 rows innehåller 11. Nästan hälften.
+#Nästa steg är att dela upp raderna. De som innehåller 11 är testgrupp. De som inte innehåller 11
+# är kontrollgrupp.
+sel <- apply(patientFrameRows[,"item",drop=F],1,function(row) length(grep(pattern,row))>0) #välj rows med 11
+testData <- patientFrameRows[sel,] #stoppa alla de rows i testData
+sel <- apply(patientFrameRows[,"item",drop=F],1,function(row) length(grep(pattern,row))==0) #utan 11
+controlData <- patientFrameRows[sel,] #skapa data frame för kontrollgrupp
+
+
+#Nästa steg: Omvandla tillbaka test- och kontrolldata i rätt format för att skriva till fil.
+#Testdatan som ska skrivas till fil:
+testDataWrite <- subset(sortPatientData, sortPatientData$seqID %in% as.numeric(testData$seqID))
+#Kontrolldatan som ska skrivas till fil:
+controlDataWrite <- subset(sortPatientData, sortPatientData$seqID %in% as.numeric(controlData$seqID))
+
+#Skriv till fil:
+write.table(testDataWrite, "testData.txt", na="", row.names=FALSE, col.names=FALSE) 
+write.table(controlDataWrite, "controlData.txt", na="", row.names=FALSE, col.names=FALSE) 
