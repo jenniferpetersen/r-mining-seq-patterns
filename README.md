@@ -1,1 +1,0 @@
-# r-mining-seq-patterns
